@@ -1,0 +1,142 @@
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#include <iostream>
+#include <string>
+#include <vector>
+
+#pragma comment(lib, "ws2_32.lib")
+using namespace std;
+
+int main()
+{
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0) {
+        cout << "WSAStartup 실패: " << result << endl;
+        return 1;
+    }
+
+    SOCKET clientSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (clientSock == INVALID_SOCKET) {
+        cout << "socket() 실패: " << WSAGetLastError() << endl;
+        WSACleanup();
+        return 1;
+    }
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    serverAddr.sin_port = htons(9000);
+
+    if (connect(clientSock, (SOCKADDR*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        cout << "connect() 실패: " << WSAGetLastError() << endl;
+        closesocket(clientSock);
+        WSACleanup();
+        return 1;
+    }
+
+    cout << "[클라이언트] 서버에 연결되었습니다." << endl;
+
+    //직접 명령 입력
+    cout << "명령 입력 (list): ";
+    string cmd;
+    cin >> cmd;
+
+    if (cmd == "list") {
+        string msg = "list\n"; 
+        int sent = send(clientSock, msg.c_str(), (int)msg.size(), 0);
+        if (sent == SOCKET_ERROR) {
+            cout << "send() 실패: " << WSAGetLastError() << endl;
+            closesocket(clientSock);
+            WSACleanup();
+            return 1;
+        }
+    }
+    else {
+        cout << "'list'" << endl;
+        closesocket(clientSock);
+        WSACleanup();
+        return 0;
+    }
+
+    //서버가 보내는 파일 목록 받기
+    string recvData;
+    char buffer[512];
+
+    while (true) {
+        int n = recv(clientSock, buffer, sizeof(buffer), 0);
+        if (n == 0) {
+            break;
+        }
+        if (n == SOCKET_ERROR) {
+            cout << "recv() 실패: " << WSAGetLastError() << endl;
+            closesocket(clientSock);
+            WSACleanup();
+            return 1;
+        }
+        recvData.append(buffer, n);
+    }
+
+    if (recvData.empty()) {
+        cout << "서버로부터 받은 데이터가 없습니다." << endl;
+        closesocket(clientSock);
+        WSACleanup();
+        return 0;
+    }
+
+    //파일 개수
+    size_t pos = recvData.find('\n');
+    if (pos == string::npos) {
+        cout << "프로토콜 형식 오류" << endl;
+        closesocket(clientSock);
+        WSACleanup();
+        return 1;
+    }
+
+    string firstLine = recvData.substr(0, pos);
+    int fileCount = 0;
+    try {
+        fileCount = stoi(firstLine);
+    }
+    catch (...) {
+        cout << "파일 개수 파싱 실패: " << firstLine << endl;
+        closesocket(clientSock);
+        WSACleanup();
+        return 1;
+    }
+
+    cout << "[클라이언트] 파일 개수: " << fileCount << endl;
+
+    //파일 이름들
+    vector<string> fileNames;
+    size_t start = pos + 1;
+
+    while (start < recvData.size()) {
+        size_t nextPos = recvData.find('\n', start);
+        if (nextPos == string::npos) {
+            string line = recvData.substr(start);
+            if (!line.empty())
+                fileNames.push_back(line);
+            break;
+        }
+
+        string line = recvData.substr(start, nextPos - start);
+        if (!line.empty())
+            fileNames.push_back(line);
+
+        start = nextPos + 1;
+    }
+
+    cout << "[클라이언트] 받은 파일 목록:" << endl;
+    for (size_t i = 0; i < fileNames.size(); ++i) {
+        cout << "  [" << i << "] " << fileNames[i] << endl;
+    }
+
+    if ((int)fileNames.size() != fileCount) {
+        cout << "개수(" << fileCount<< ")와 실제 받은 개수(" << fileNames.size() << ")가 다릅니다." << endl;
+    }
+
+    closesocket(clientSock);
+    WSACleanup();
+    return 0;
+}
