@@ -1,0 +1,125 @@
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#include <winsock2.h>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <filesystem>
+
+#pragma comment(lib, "ws2_32.lib")
+
+using namespace std;
+namespace fs = std::filesystem;
+
+// 디렉토리에서 .txt, .png 파일 목록 가져오기
+vector<string> GetFileList(const string& dirPath)
+{
+    vector<string> files;
+
+    for (const auto& entry : fs::directory_iterator(dirPath)) {
+        if (!entry.is_regular_file()) continue;
+
+        auto ext = entry.path().extension().string(); // ".txt", ".png"
+        if (ext == ".txt" || ext == ".png") {
+            files.push_back(entry.path().filename().string());
+        }
+    }
+
+    return files;
+}
+
+int main()
+{
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0) {
+        cout << "WSAStartup 실패: " << result << endl;
+        return 1;
+    }
+
+    SOCKET serverSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSock == INVALID_SOCKET) {
+        cout << "socket() 실패: " << WSAGetLastError() << endl;
+        WSACleanup();
+        return 1;
+    }
+
+    sockaddr_in serverAddr{};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    serverAddr.sin_port = htons(9000);
+
+    if (bind(serverSock, (SOCKADDR*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        cout << "bind() 실패: " << WSAGetLastError() << endl;
+        closesocket(serverSock);
+        WSACleanup();
+        return 1;
+    }
+
+    if (listen(serverSock, 1) == SOCKET_ERROR) {
+        cout << "listen() 실패: " << WSAGetLastError() << endl;
+        closesocket(serverSock);
+        WSACleanup();
+        return 1;
+    }
+
+    cout << "[서버] 클라이언트 접속 대기 중..." << endl;
+
+    sockaddr_in clientAddr{};
+    int clientAddrSize = sizeof(clientAddr);
+    SOCKET clientSock = accept(serverSock, (SOCKADDR*)&clientAddr, &clientAddrSize);
+    if (clientSock == INVALID_SOCKET) {
+        cout << "accept() 실패: " << WSAGetLastError() << endl;
+        closesocket(serverSock);
+        WSACleanup();
+        return 1;
+    }
+    cout << "[서버] 클라이언트 접속됨!" << endl;
+
+    // 클라이언트가 보낸 명령 받기
+    char cmdBuf[32]{};
+    int n = recv(clientSock, cmdBuf, sizeof(cmdBuf) - 1, 0);
+    if (n <= 0) {
+        cout << "recv() 실패 또는 연결 종료: " << WSAGetLastError() << endl;
+        closesocket(clientSock);
+        closesocket(serverSock);
+        WSACleanup();
+        return 1;
+    }
+    cmdBuf[n] = '\0';
+    string cmd = cmdBuf;
+    cout << "[서버] 클라이언트 요청: " << cmd << endl;
+
+    
+    if (cmd.rfind("list", 0) == 0) {
+        string dirPath = "C:/Users/user/Desktop/test"; //원하는 폴더 경로
+        vector<string> files = GetFileList(dirPath);
+
+        // 보낼 문자열 만들기
+        string sendData;
+        sendData += to_string(files.size()) + "\n";
+        for (const auto& name : files) {
+            sendData += name + "\n";
+        }
+
+        //클라이언트에게 전송
+        int bytesToSend = (int)sendData.size();
+        int sent = 0;
+        while (sent < bytesToSend) {
+            int s = send(clientSock, sendData.c_str() + sent, bytesToSend - sent, 0);
+            if (s == SOCKET_ERROR) {
+                cout << "send() 실패: " << WSAGetLastError() << endl;
+                break;
+            }
+            sent += s;
+        }
+        cout << "[서버] 파일 목록 전송 완료 (" << files.size() << "개)" << endl;
+    }
+    else {
+        cout << "[서버] 알 수 없는 명령: " << cmd << endl;
+    }
+
+    closesocket(clientSock);
+    closesocket(serverSock);
+    WSACleanup();
+    return 0;
+}
